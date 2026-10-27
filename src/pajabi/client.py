@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, TypeVar
 from urllib.parse import urlencode
 
@@ -92,7 +92,7 @@ def _absolute(base_url: str, path: str, params: Params = None) -> str:
 
     An absolute URL is allowed only when its scheme, host, and port match
     ``base_url``. Anything else raises :class:`KajabiError` before a request
-    is sent.
+    is sent. Redirect targets are checked here too.
     """
     candidate = httpx.URL(path)
     if candidate.is_absolute_url:
@@ -114,6 +114,25 @@ def _absolute(base_url: str, path: str, params: Params = None) -> str:
         return url
     separator = "&" if "?" in url else "?"
     return f"{url}{separator}{urlencode(params)}"
+
+
+def _check_redirect(base_url: str, response: httpx.Response) -> None:
+    """Raise when a redirect target is outside ``base_url``.
+
+    httpx calls response hooks before it builds the next request, and closes
+    the response if the hook raises. The redirected request is not sent.
+    """
+    if not response.has_redirect_location:
+        return
+    target = str(response.url.join(response.headers["location"]))
+    _absolute(base_url, target)
+
+
+def _detach_hook(client: httpx.Client | httpx.AsyncClient, hook: Callable[..., Any]) -> None:
+    """Drop a response hook so a shared client does not keep it."""
+    hooks = client.event_hooks["response"]
+    if hook in hooks:
+        hooks.remove(hook)
 
 
 def _dump(body: Mapping[str, Any]) -> bytes:
@@ -242,6 +261,28 @@ class Kajabi:
     cover the public API; nothing else on the client sends HTTP.
     """
 
+    blog_posts: ReadOnly[BlogPost]
+    contact_tags: ReadOnly[ContactTag]
+    courses: ReadOnly[Course]
+    custom_fields: ReadOnly[CustomField]
+    form_submissions: ReadOnly[FormSubmission]
+    landing_pages: ReadOnly[LandingPage]
+    order_items: ReadOnly[OrderItem]
+    orders: ReadOnly[Order]
+    podcasts: ReadOnly[Podcast]
+    products: ReadOnly[Product]
+    sites: ReadOnly[Site]
+    transactions: ReadOnly[Transaction]
+    website_pages: ReadOnly[WebsitePage]
+    contact_notes: ContactNotes
+    contacts: Contacts
+    customers: Customers
+    forms: Forms
+    hooks: Hooks
+    payouts: Payouts
+    offers: Offers
+    purchases: Purchases
+
     def __init__(
         self,
         client_id: str | None = None,
@@ -255,7 +296,6 @@ class Kajabi:
         http_client: httpx.Client | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
         self.max_retries = max_retries
         self._auth = KajabiAuth(
             client_id=_credential(client_id, "KAJABI_CLIENT_ID"),
@@ -269,27 +309,8 @@ class Kajabi:
             timeout=timeout,
             follow_redirects=True,
         )
-        self.blog_posts = ReadOnly(self, "/v1/blog_posts", BlogPost)
-        self.contact_notes = ContactNotes(self)
-        self.contact_tags = ReadOnly(self, "/v1/contact_tags", ContactTag)
-        self.contacts = Contacts(self)
-        self.courses = ReadOnly(self, "/v1/courses", Course)
-        self.custom_fields = ReadOnly(self, "/v1/custom_fields", CustomField)
-        self.customers = Customers(self)
-        self.forms = Forms(self)
-        self.form_submissions = ReadOnly(self, "/v1/form_submissions", FormSubmission)
-        self.hooks = Hooks(self)
-        self.payouts = Payouts(self)
-        self.landing_pages = ReadOnly(self, "/v1/landing_pages", LandingPage)
-        self.offers = Offers(self)
-        self.order_items = ReadOnly(self, "/v1/order_items", OrderItem)
-        self.orders = ReadOnly(self, "/v1/orders", Order)
-        self.podcasts = ReadOnly(self, "/v1/podcasts", Podcast)
-        self.products = ReadOnly(self, "/v1/products", Product)
-        self.purchases = Purchases(self)
-        self.sites = ReadOnly(self, "/v1/sites", Site)
-        self.transactions = ReadOnly(self, "/v1/transactions", Transaction)
-        self.website_pages = ReadOnly(self, "/v1/website_pages", WebsitePage)
+        self._http.event_hooks["response"].append(self._guard_redirect)
+        _mount(self)
 
     def __enter__(self) -> Kajabi:
         return self
@@ -297,11 +318,16 @@ class Kajabi:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    def _guard_redirect(self, response: httpx.Response) -> None:
+        _check_redirect(self.base_url, response)
+
     def close(self) -> None:
         """Close the HTTP client this object created.
 
-        A client passed in as ``http_client`` is left open.
+        A client passed in as ``http_client`` is left open. This still removes
+        the redirect hook installed on that client.
         """
+        _detach_hook(self._http, self._guard_redirect)
         if self._owns_http:
             self._http.close()
 
@@ -318,7 +344,8 @@ class Kajabi:
     ) -> httpx.Response:
         """Send one HTTP request and return the response.
 
-        Absolute URLs must match this client's origin. ``authenticated=False``
+        Absolute URLs must match this client's origin. A redirect to another
+        origin raises before that request is sent. ``authenticated=False``
         skips bearer auth. The returned response has already been read.
         """
         url = _absolute(self.base_url, path, params)
@@ -339,7 +366,8 @@ class Kajabi:
                 )
                 if isinstance(outcome, Exception):
                     raise outcome from exc
-                assert isinstance(outcome, float)
+                if not isinstance(outcome, float):
+                    raise KajabiError("Retry decision was not a delay.") from exc
                 _clock.sleep(outcome)
                 attempt += 1
                 continue
@@ -472,6 +500,28 @@ class AsyncKajabi:
     :meth:`request` is the low-level JSON:API escape hatch, as on :class:`Kajabi`.
     """
 
+    blog_posts: AsyncReadOnly[BlogPost]
+    contact_tags: AsyncReadOnly[ContactTag]
+    courses: AsyncReadOnly[Course]
+    custom_fields: AsyncReadOnly[CustomField]
+    form_submissions: AsyncReadOnly[FormSubmission]
+    landing_pages: AsyncReadOnly[LandingPage]
+    order_items: AsyncReadOnly[OrderItem]
+    orders: AsyncReadOnly[Order]
+    podcasts: AsyncReadOnly[Podcast]
+    products: AsyncReadOnly[Product]
+    sites: AsyncReadOnly[Site]
+    transactions: AsyncReadOnly[Transaction]
+    website_pages: AsyncReadOnly[WebsitePage]
+    contact_notes: AsyncContactNotes
+    contacts: AsyncContacts
+    customers: AsyncCustomers
+    forms: AsyncForms
+    hooks: AsyncHooks
+    payouts: AsyncPayouts
+    offers: AsyncOffers
+    purchases: AsyncPurchases
+
     def __init__(
         self,
         client_id: str | None = None,
@@ -485,7 +535,6 @@ class AsyncKajabi:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
         self.max_retries = max_retries
         self._auth = KajabiAuth(
             client_id=_credential(client_id, "KAJABI_CLIENT_ID"),
@@ -499,27 +548,8 @@ class AsyncKajabi:
             timeout=timeout,
             follow_redirects=True,
         )
-        self.blog_posts = AsyncReadOnly(self, "/v1/blog_posts", BlogPost)
-        self.contact_notes = AsyncContactNotes(self)
-        self.contact_tags = AsyncReadOnly(self, "/v1/contact_tags", ContactTag)
-        self.contacts = AsyncContacts(self)
-        self.courses = AsyncReadOnly(self, "/v1/courses", Course)
-        self.custom_fields = AsyncReadOnly(self, "/v1/custom_fields", CustomField)
-        self.customers = AsyncCustomers(self)
-        self.forms = AsyncForms(self)
-        self.form_submissions = AsyncReadOnly(self, "/v1/form_submissions", FormSubmission)
-        self.hooks = AsyncHooks(self)
-        self.payouts = AsyncPayouts(self)
-        self.landing_pages = AsyncReadOnly(self, "/v1/landing_pages", LandingPage)
-        self.offers = AsyncOffers(self)
-        self.order_items = AsyncReadOnly(self, "/v1/order_items", OrderItem)
-        self.orders = AsyncReadOnly(self, "/v1/orders", Order)
-        self.podcasts = AsyncReadOnly(self, "/v1/podcasts", Podcast)
-        self.products = AsyncReadOnly(self, "/v1/products", Product)
-        self.purchases = AsyncPurchases(self)
-        self.sites = AsyncReadOnly(self, "/v1/sites", Site)
-        self.transactions = AsyncReadOnly(self, "/v1/transactions", Transaction)
-        self.website_pages = AsyncReadOnly(self, "/v1/website_pages", WebsitePage)
+        self._http.event_hooks["response"].append(self._guard_redirect)
+        _mount(self)
 
     async def __aenter__(self) -> AsyncKajabi:
         return self
@@ -527,11 +557,16 @@ class AsyncKajabi:
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
 
+    async def _guard_redirect(self, response: httpx.Response) -> None:
+        _check_redirect(self.base_url, response)
+
     async def aclose(self) -> None:
         """Close the HTTP client this object created.
 
-        A client passed in as ``http_client`` is left open.
+        A client passed in as ``http_client`` is left open. This still removes
+        the redirect hook installed on that client.
         """
+        _detach_hook(self._http, self._guard_redirect)
         if self._owns_http:
             await self._http.aclose()
 
@@ -565,7 +600,8 @@ class AsyncKajabi:
                 )
                 if isinstance(outcome, Exception):
                     raise outcome from exc
-                assert isinstance(outcome, float)
+                if not isinstance(outcome, float):
+                    raise KajabiError("Retry decision was not a delay.") from exc
                 await _clock.asleep(outcome)
                 attempt += 1
                 continue
@@ -684,3 +720,49 @@ class AsyncKajabi:
         )
         await response.aclose()
         self._auth.clear()
+
+
+# Read-only rows are (attribute, path, model). The other rows are
+# (attribute, sync class, async class). Both clients are built from this.
+_NAMESPACE_TABLE = (
+    (
+        ("blog_posts", "/v1/blog_posts", BlogPost),
+        ("contact_tags", "/v1/contact_tags", ContactTag),
+        ("courses", "/v1/courses", Course),
+        ("custom_fields", "/v1/custom_fields", CustomField),
+        ("form_submissions", "/v1/form_submissions", FormSubmission),
+        ("landing_pages", "/v1/landing_pages", LandingPage),
+        ("order_items", "/v1/order_items", OrderItem),
+        ("orders", "/v1/orders", Order),
+        ("podcasts", "/v1/podcasts", Podcast),
+        ("products", "/v1/products", Product),
+        ("sites", "/v1/sites", Site),
+        ("transactions", "/v1/transactions", Transaction),
+        ("website_pages", "/v1/website_pages", WebsitePage),
+    ),
+    (
+        ("contact_notes", ContactNotes, AsyncContactNotes),
+        ("contacts", Contacts, AsyncContacts),
+        ("customers", Customers, AsyncCustomers),
+        ("forms", Forms, AsyncForms),
+        ("hooks", Hooks, AsyncHooks),
+        ("payouts", Payouts, AsyncPayouts),
+        ("offers", Offers, AsyncOffers),
+        ("purchases", Purchases, AsyncPurchases),
+    ),
+)
+
+
+def _mount(client: Kajabi | AsyncKajabi) -> None:
+    """Attach every namespace in :data:`_NAMESPACE_TABLE`."""
+    read_only, namespaces = _NAMESPACE_TABLE
+    if isinstance(client, AsyncKajabi):
+        for attribute, path, model in read_only:
+            setattr(client, attribute, AsyncReadOnly(client, path, model))
+        for attribute, _sync_namespace, async_namespace in namespaces:
+            setattr(client, attribute, async_namespace(client))
+        return
+    for attribute, path, model in read_only:
+        setattr(client, attribute, ReadOnly(client, path, model))
+    for attribute, sync_namespace, _async_namespace in namespaces:
+        setattr(client, attribute, sync_namespace(client))

@@ -18,6 +18,7 @@ def test_unknown_keywords_and_missing_arguments_are_type_errors(tmp_path: Path) 
                 "kajabi.contacts.create(site_id='1', emial='x')",
                 "kajabi.contacts.offers.grant('1')",
                 "kajabi.forms.submit('1', name='x')",
+                "kajabi.contacts.tags.list(owner_id='1')",
             ]
         ),
         encoding="utf-8",
@@ -38,6 +39,7 @@ def test_unknown_keywords_and_missing_arguments_are_type_errors(tmp_path: Path) 
     output = stdout + stderr
     assert code != 0, output
     assert 'Unexpected keyword argument "emial"' in output, output
+    assert 'Missing positional argument "contact_id"' in output, output
     assert 'Missing positional argument "offer_ids"' in output, output
     assert 'Missing named argument "email" for "submit"' in output, output
 
@@ -52,6 +54,8 @@ def test_valid_contact_create_type_checks(tmp_path: Path) -> None:
                 "kajabi = Kajabi(access_token='token')",
                 "kajabi.contacts.create(site_id='1', name='Jane', subscribed=True)",
                 "kajabi.forms.submit('1', name='Jane', email='jane@example.com')",
+                "kajabi.contacts.tags.list(contact_id='1')",
+                "kajabi.contacts.offers.list(owner_id='1')",
             ]
         ),
         encoding="utf-8",

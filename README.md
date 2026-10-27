@@ -317,9 +317,11 @@ Kajabi(
 
 `429` is always retried. A `Retry-After` value, seconds or an HTTP date, wins over the backoff and is capped at 60 seconds, so a huge value cannot stall the caller. `5xx`, connection errors, and timeouts are retried only for idempotent methods: `GET`, `HEAD`, `OPTIONS`, `PUT`, `PATCH`, and `DELETE`. Backoff is exponential with full jitter, capped at 20 seconds.
 
-`request(method, path, *, params=None, json=None)` is the low-level escape hatch for a path the resource namespaces do not cover. It sends `Accept: application/vnd.api+json` and, when `json` is given, a JSON:API body. The return value is the parsed JSON, or `None` when the body is empty. It uses the same retry policy as the resource methods and sends bearer auth. An absolute URL is sent only when its scheme, host, and port match `base_url` (default ports are the same as an omitted port). Any other origin raises `KajabiError` before a request is made. `version()` and `revoke_token()` are the calls that skip bearer auth.
+`request(method, path, *, params=None, json=None)` is the low-level escape hatch for a path the resource namespaces do not cover. It sends `Accept: application/vnd.api+json` and, when `json` is given, a JSON:API body. The return value is the parsed JSON, or `None` when the body is empty. It uses the same retry policy as the resource methods and sends bearer auth. An absolute URL is sent only when its scheme, host, and port match `base_url` (default ports are the same as an omitted port). Any other origin raises `KajabiError` before a request is made. A redirect to another origin raises `KajabiError` the same way, before that redirected request is sent. `version()` and `revoke_token()` are the calls that skip bearer auth.
 
 Pass `http_client` to use your own `httpx.Client` (or `httpx.AsyncClient` for `AsyncKajabi`). That client is left open when `pajabi` closes. A client this library creates is closed.
+
+`timeout` applies only to the HTTP client this library constructs. A client passed as `http_client` keeps its own timeout.
 
 `base_url` defaults to `https://api.kajabi.com`. Requests are sent to that origin even if `http_client` has a different base URL.
 

@@ -7,7 +7,10 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pajabi._parsing import parse_collection, parse_one, parse_version
+import pytest
+
+from pajabi._parsing import parse_collection, parse_identifiers, parse_one, parse_version
+from pajabi.errors import KajabiError
 from pajabi.models import (
     MODEL_TYPES,
     Contact,
@@ -17,7 +20,9 @@ from pajabi.models import (
     Customer,
     Resource,
     ResourceIdentifier,
+    Version,
 )
+from pajabi.pagination import PageLinks, PageMeta
 
 SPEC = Path(__file__).resolve().parents[1] / "spec" / "openapi.yaml"
 
@@ -107,6 +112,48 @@ def test_customer_revenue_integer_from_the_spec_example() -> None:
         Customer,
     )
     assert customer.net_revenue == "10000"
+
+
+def test_collection_and_identifiers_reject_a_list_and_object_data() -> None:
+    listed = [{"id": "1", "type": "contacts"}]
+    object_data = {"data": {"id": "1", "type": "contacts"}}
+    with pytest.raises(KajabiError, match="Expected a JSON:API document"):
+        parse_collection(listed, Contact)
+    with pytest.raises(KajabiError, match="Expected a JSON:API document"):
+        parse_identifiers(listed)
+    with pytest.raises(KajabiError, match="Expected a JSON:API collection document"):
+        parse_collection(object_data, Contact)
+    with pytest.raises(KajabiError, match="Expected a JSON:API collection document"):
+        parse_identifiers(object_data)
+
+
+def test_missing_and_null_data_are_empty_pages() -> None:
+    empty = ([], PageMeta(), PageLinks())
+    for payload in ({}, {"data": None}):
+        assert parse_collection(payload, Contact) == empty
+        assert parse_identifiers(payload) == empty
+    partial = {"meta": {"total_count": 2}, "links": {"self": "https://example.test/contacts"}}
+    items, meta, links = parse_collection(partial, Contact)
+    assert items == []
+    assert meta.total_count == 2
+    assert links.self_link == "https://example.test/contacts"
+    identifiers, meta, links = parse_identifiers(partial)
+    assert identifiers == []
+    assert meta.total_count == 2
+    assert links.self_link == "https://example.test/contacts"
+
+
+def test_parse_version_rejects_a_non_dict_and_accepts_an_empty_document() -> None:
+    with pytest.raises(KajabiError, match="Expected a JSON:API document"):
+        parse_version([])
+    assert parse_version({}) == Version()
+
+
+def test_parse_one_rejects_a_non_document() -> None:
+    with pytest.raises(KajabiError, match="Expected a JSON:API document"):
+        parse_one([], Contact)
+    with pytest.raises(KajabiError, match="Expected a JSON:API resource document"):
+        parse_one({"data": None}, Contact)
 
 
 def test_spec_example_payloads_parse() -> None:

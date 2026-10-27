@@ -4,10 +4,17 @@ from __future__ import annotations
 
 from typing import Any, TypeVar, cast
 
+from pajabi.errors import KajabiError
 from pajabi.models import MODEL_TYPES, Resource, ResourceIdentifier, Version
 from pajabi.pagination import PageLinks, PageMeta
 
 T = TypeVar("T", bound=Resource)
+
+
+def _document(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise KajabiError("Expected a JSON:API document.")
+    return cast(dict[str, Any], payload)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -134,26 +141,33 @@ def index_included(payload: dict[str, Any]) -> dict[tuple[str, str], Resource]:
     return mapping
 
 
+def _collection_data(document: dict[str, Any]) -> list[Any] | None:
+    """Return ``data`` when it is a list. Missing or JSON null is an empty page."""
+    if "data" not in document or document["data"] is None:
+        return None
+    data = document["data"]
+    if not isinstance(data, list):
+        raise KajabiError("Expected a JSON:API collection document.")
+    return data
+
+
 def parse_one(payload: Any, model: type[T]) -> T:
     """Parse a single-resource document into ``model``."""
-    from pajabi.errors import KajabiError
-
-    if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+    document = _document(payload)
+    data = document.get("data")
+    if not isinstance(data, dict):
         raise KajabiError("Expected a JSON:API resource document.")
-    document = cast(dict[str, Any], payload)
     included = index_included(document)
-    return parse_resource(cast(dict[str, Any], document["data"]), included, model)
+    return parse_resource(cast(dict[str, Any], data), included, model)
 
 
 def parse_collection(payload: Any, model: type[T]) -> tuple[list[T], PageMeta, PageLinks]:
-    """Parse a collection document. A missing ``data`` array becomes an empty page."""
-    if not isinstance(payload, dict):
-        return [], PageMeta(), PageLinks()
-    document = cast(dict[str, Any], payload)
+    """Parse a collection document. Missing or null ``data`` is an empty page."""
+    document = _document(payload)
     included = index_included(document)
-    data = document.get("data")
+    data = _collection_data(document)
     items: list[T] = []
-    if isinstance(data, list):
+    if data is not None:
         for entry in data:
             if isinstance(entry, dict):
                 items.append(parse_resource(entry, included, model))
@@ -161,13 +175,11 @@ def parse_collection(payload: Any, model: type[T]) -> tuple[list[T], PageMeta, P
 
 
 def parse_identifiers(payload: Any) -> tuple[list[ResourceIdentifier], PageMeta, PageLinks]:
-    """Parse a relationship document, which is a list of resource identifiers."""
-    if not isinstance(payload, dict):
-        return [], PageMeta(), PageLinks()
-    document = cast(dict[str, Any], payload)
-    data = document.get("data")
+    """Parse a relationship document. Missing or null ``data`` is an empty page."""
+    document = _document(payload)
+    data = _collection_data(document)
     items: list[ResourceIdentifier] = []
-    if isinstance(data, list):
+    if data is not None:
         for entry in data:
             if isinstance(entry, dict) and entry.get("id") is not None:
                 items.append(
@@ -180,11 +192,10 @@ def parse_identifiers(payload: Any) -> tuple[list[ResourceIdentifier], PageMeta,
 
 
 def parse_version(payload: Any) -> Version:
-    if not isinstance(payload, dict):
-        return Version()
-    meta = _mapping(payload.get("meta"))
-    links = _mapping(payload.get("links"))
-    jsonapi = _mapping(payload.get("jsonapi"))
+    document = _document(payload)
+    meta = _mapping(document.get("meta"))
+    links = _mapping(document.get("links"))
+    jsonapi = _mapping(document.get("jsonapi"))
     specification = jsonapi.get("specficiation")
     if not isinstance(specification, str):
         specification = jsonapi.get("specification")

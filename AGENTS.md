@@ -13,7 +13,7 @@ Typed Python client for the Kajabi Public API. `Kajabi` is synchronous. `AsyncKa
 
 - `src/pajabi/_version.py` holds `__version__`. Hatch reads it, so `[project]` leaves `version` dynamic. Bump that file only.
 - `src/pajabi/client.py` — HTTP transport, retries, `request`, `me`, `version`, `revoke_token`. Resource namespaces are attributes set in `__init__`.
-- `src/pajabi/resources.py` — one sync class and one `Async` twin per namespace that is more than list and get.
+- `src/pajabi/resources/` — resource namespaces. `_common.py` holds list/get and shared helpers. `contacts.py`, `commerce.py`, and `content.py` hold one sync class and one `Async` twin per namespace that is more than list and get.
 - `src/pajabi/models.py` — pydantic models. Attributes are flattened onto the model. `MODEL_TYPES` maps a JSON:API `type` to a class for `included` resources.
 - `src/pajabi/_bodies.py` builds JSON:API documents. `_query.py` builds query strings. `_parsing.py` reads responses. `_auth.py` holds OAuth. `_retry.py` decides retry delays. `_clock.py` is the only sleep.
 - `spec/openapi.yaml` is the HTTP contract. `tests/catalog.py` lists every call. `tests/test_spec_coverage.py` requires the two sets to match.
@@ -26,7 +26,7 @@ Typed Python client for the Kajabi Public API. `Kajabi` is synchronous. `AsyncKa
 | The operation | Put it |
 | --- | --- |
 | `list` and `get` only, paths `/v1/<type>` and `/v1/<type>/{id}` | `ReadOnly` on `Kajabi`, `AsyncReadOnly` on `AsyncKajabi` |
-| Writes, a required argument, a nested relationship, or any other path | A sync class and an `Async` twin in `resources.py`, constructed in both clients |
+| Writes, a required argument, a nested relationship, or any other path | A sync class and an `Async` twin in `resources/contacts.py`, `resources/commerce.py`, or `resources/content.py` |
 | Not a resource (`me`, `version`, token, revoke) | A method on both `Kajabi` and `AsyncKajabi` |
 
 `request()` is the public escape hatch. Methods inside the library call the helpers below.
@@ -61,7 +61,7 @@ Ids are `str`. The `id` validator stringifies numbers. Do not introduce `Decimal
 
 1. Copy the path from `spec/openapi.yaml`, placeholders included (`{id}`, `{contact_id}`, `{customer_id}`, `{offer_id}`). Open that one path. The file is about 12,000 lines.
 2. Add or extend the model in `models.py` and register its JSON:API type in `MODEL_TYPES`.
-3. Wire both clients. Read-only is `ReadOnly(self, "/v1/courses", Course)` and `AsyncReadOnly(self, "/v1/courses", Course)`. Anything else is a sync class plus an `Async` twin. Build `iter` with `_pages(list)` and `_apages(list)`.
+3. Add a row to the namespace table in `client.py` instead of editing two lists. Read-only is `(attribute, path, model)`, constructed with `ReadOnly` or `AsyncReadOnly`. Anything else is `(attribute, sync class, async class)`. Annotate the attribute on `Kajabi` and `AsyncKajabi`. Build `iter` with `_pages(list)` and `_apages(list)`.
 4. Build bodies with `resource_document` or `identifiers_document`. Build query strings with `_Listing(...).params(filters)`, which calls `encode_query`. `None` drops a filter. A bool becomes `true` or `false`. A sequence becomes `filter[<name>][]`.
 5. Add a `Case` in `tests/catalog.py`. Test ids are `"1"`. `json_body` is the document `test_requests` compares byte for byte. That test runs every case on both clients. `test_spec_coverage` fails if a spec operation has no case, or a case names a path the spec does not have.
 6. A closed set of attribute keywords is a `TypedDict` plus `Unpack`, as `ContactAttributes` is. Export it from `pajabi/__init__.py` only when callers name the type.
@@ -100,11 +100,11 @@ Case(
 
 ## Do / don't
 
-- **Do not** add a public method on only one client. **Do** add it on `Kajabi` and `AsyncKajabi`, and construct the namespace in both `__init__` methods.
+- **Do not** add a public method on only one client. **Do** add it on `Kajabi` and `AsyncKajabi`. **Do not** construct a namespace in both `__init__` methods. **Do** add a row to the namespace table in `client.py` instead of editing two lists.
 - **Do not** assemble a query string or a JSON:API document inside a resource method. **Do** call `encode_query` and `resource_document`.
 - **Do not** sleep with `time.sleep` or `asyncio.sleep`. **Do** call `pajabi._clock.sleep` and `pajabi._clock.asleep`. Tests replace those.
 - **Do not** retry `POST` after a 5xx, a timeout, or a connection error. **Do** leave the decision in `retry_delay`. Status 429 is retried for every method. Other retries apply only to `GET`, `HEAD`, `OPTIONS`, `PUT`, `PATCH`, and `DELETE`.
-- **Do not** send an absolute URL whose scheme, host, or port differs from `base_url`. **Do** resolve URLs with `_absolute`. A `links.next` on another origin raises `KajabiError` before the request. An explicit default port (`:443`) matches an omitted port.
+- **Do not** send an absolute URL whose scheme, host, or port differs from `base_url`. **Do** resolve URLs with `_absolute`. A `links.next` on another origin raises `KajabiError` before the request. A redirect to another origin raises `KajabiError` before that request is sent. An explicit default port (`:443`) matches an omitted port.
 - **Do not** close an `http_client` the caller passed in. **Do** close the client this library constructed (`_owns_http`).
 - **Do not** call the live API, or read `KAJABI_CLIENT_ID` / `KAJABI_CLIENT_SECRET`, in tests. **Do** use `respx`. `tests/conftest.py` deletes those variables for every test.
 

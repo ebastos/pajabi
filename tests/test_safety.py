@@ -117,3 +117,115 @@ def test_request_returns_parsed_json_api_body() -> None:
         assert get.headers["authorization"] == "Bearer SECRET"
         assert post.headers["content-type"] == "application/vnd.api+json"
         assert post.read() == b'{"data": {"type": "pings"}}'
+
+
+def test_sync_redirect_refuses_a_foreign_origin() -> None:
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{BASE}/v1/sites").mock(
+            return_value=httpx.Response(302, headers={"Location": EVIL})
+        )
+        evil = router.get(EVIL).mock(return_value=httpx.Response(200, json={"data": []}))
+        with Kajabi(access_token="SECRET", max_retries=0) as kajabi:
+            http = kajabi._http
+            with pytest.raises(KajabiError, match="evil.example"):
+                kajabi.sites.list()
+        assert evil.call_count == 0
+        assert not any(call.request.url.host == "evil.example" for call in router.calls)
+        assert kajabi._guard_redirect not in http.event_hooks["response"]
+
+
+async def test_async_redirect_refuses_a_foreign_origin() -> None:
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{BASE}/v1/sites").mock(
+            return_value=httpx.Response(302, headers={"Location": EVIL})
+        )
+        evil = router.get(EVIL).mock(return_value=httpx.Response(200, json={"data": []}))
+        async with AsyncKajabi(access_token="SECRET", max_retries=0) as kajabi:
+            http = kajabi._http
+            with pytest.raises(KajabiError, match="evil.example"):
+                await kajabi.sites.list()
+        assert evil.call_count == 0
+        assert not any(call.request.url.host == "evil.example" for call in router.calls)
+        assert kajabi._guard_redirect not in http.event_hooks["response"]
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        pytest.param(f"{BASE}/v1/sites?page[number]=2", id="absolute"),
+        pytest.param(f"{BASE}:443/v1/sites?page[number]=2", id="explicit-default-port"),
+        pytest.param("/v1/sites?page[number]=2", id="relative"),
+    ],
+)
+def test_redirect_to_the_same_origin_is_followed(location: str) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("page[number]") == "2":
+            return httpx.Response(200, json=_page(None))
+        return httpx.Response(302, headers={"Location": location})
+
+    with respx.mock(assert_all_called=False) as router:
+        router.get(url__regex=r"https://api\.kajabi\.com(?::443)?/v1/sites.*").mock(
+            side_effect=respond
+        )
+        with Kajabi(access_token="SECRET", max_retries=0) as kajabi:
+            page = kajabi.sites.list()
+        assert [site.id for site in page] == ["1"]
+        assert len(router.calls) == 2
+        assert router.calls[1].request.url.host == "api.kajabi.com"
+        assert router.calls[1].request.url.params["page[number]"] == "2"
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        pytest.param(f"{BASE}/v1/sites?page[number]=2", id="absolute"),
+        pytest.param(f"{BASE}:443/v1/sites?page[number]=2", id="explicit-default-port"),
+        pytest.param("/v1/sites?page[number]=2", id="relative"),
+    ],
+)
+async def test_async_redirect_to_the_same_origin_is_followed(location: str) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("page[number]") == "2":
+            return httpx.Response(200, json=_page(None))
+        return httpx.Response(302, headers={"Location": location})
+
+    with respx.mock(assert_all_called=False) as router:
+        router.get(url__regex=r"https://api\.kajabi\.com(?::443)?/v1/sites.*").mock(
+            side_effect=respond
+        )
+        async with AsyncKajabi(access_token="SECRET", max_retries=0) as kajabi:
+            page = await kajabi.sites.list()
+        assert [site.id for site in page] == ["1"]
+        assert len(router.calls) == 2
+        assert router.calls[1].request.url.host == "api.kajabi.com"
+        assert router.calls[1].request.url.params["page[number]"] == "2"
+
+
+def test_close_removes_the_redirect_hook() -> None:
+    with Kajabi(access_token="SECRET", max_retries=0) as kajabi:
+        http = kajabi._http
+        assert kajabi._guard_redirect in http.event_hooks["response"]
+    assert http.is_closed
+    assert kajabi._guard_redirect not in http.event_hooks["response"]
+
+    external = httpx.Client()
+    with Kajabi(access_token="SECRET", max_retries=0, http_client=external) as kajabi:
+        assert kajabi._guard_redirect in external.event_hooks["response"]
+    assert not external.is_closed
+    assert kajabi._guard_redirect not in external.event_hooks["response"]
+    external.close()
+
+
+async def test_aclose_removes_the_redirect_hook() -> None:
+    async with AsyncKajabi(access_token="SECRET", max_retries=0) as kajabi:
+        http = kajabi._http
+        assert kajabi._guard_redirect in http.event_hooks["response"]
+    assert http.is_closed
+    assert kajabi._guard_redirect not in http.event_hooks["response"]
+
+    external = httpx.AsyncClient()
+    async with AsyncKajabi(access_token="SECRET", max_retries=0, http_client=external) as kajabi:
+        assert kajabi._guard_redirect in external.event_hooks["response"]
+    assert not external.is_closed
+    assert kajabi._guard_redirect not in external.event_hooks["response"]
+    await external.aclose()

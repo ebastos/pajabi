@@ -296,9 +296,6 @@ class Hook(Resource):
     updated_at: datetime | None = None
 
 
-Webhook = Hook
-
-
 class LandingPage(Resource):
     """A landing page."""
 
