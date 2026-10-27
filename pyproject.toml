@@ -1,14 +1,24 @@
 [project]
 name = "pajabi"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Typed Python client for the Kajabi Public API"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
+authors = [
+    { name = "Eri Bastos", email = "bastos.eri@gmail.com" },
+]
 dependencies = [
     "httpx>=0.27",
     "pydantic>=2",
     "typing_extensions>=4.7",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ebastos/pajabi"
+Repository = "https://github.com/ebastos/pajabi"
+Issues = "https://github.com/ebastos/pajabi/issues"
 
 [dependency-groups]
 dev = [
@@ -23,6 +33,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/pajabi/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pajabi"]

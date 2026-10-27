@@ -11,6 +11,7 @@ Typed Python client for the Kajabi Public API. `Kajabi` is synchronous. `AsyncKa
 
 ## Layout
 
+- `src/pajabi/_version.py` holds `__version__`. Hatch reads it, so `[project]` leaves `version` dynamic. Bump that file only.
 - `src/pajabi/client.py` — HTTP transport, retries, `request`, `me`, `version`, `revoke_token`. Resource namespaces are attributes set in `__init__`.
 - `src/pajabi/resources.py` — one sync class and one `Async` twin per namespace that is more than list and get.
 - `src/pajabi/models.py` — pydantic models. Attributes are flattened onto the model. `MODEL_TYPES` maps a JSON:API `type` to a class for `included` resources.

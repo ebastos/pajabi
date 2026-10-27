@@ -8,19 +8,19 @@ Requires Python 3.10 or newer.
 
 ## Installation
 
-From a checkout of this project:
-
 ```bash
-pip install .
+pip install pajabi
 ```
 
 With [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv sync
+uv add pajabi
 ```
 
 Runtime dependencies are `httpx` and `pydantic` 2.
+
+From a checkout of this repository, `uv sync` installs the package and the development tools.
 
 ## Authentication
 
@@ -322,3 +322,7 @@ Kajabi(
 Pass `http_client` to use your own `httpx.Client` (or `httpx.AsyncClient` for `AsyncKajabi`). That client is left open when `pajabi` closes. A client this library creates is closed.
 
 `base_url` defaults to `https://api.kajabi.com`. Requests are sent to that origin even if `http_client` has a different base URL.
+
+## License
+
+Released under the MIT License.
