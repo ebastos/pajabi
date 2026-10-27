@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+
 from tests.catalog import CASES
 
 SPEC = Path(__file__).resolve().parents[1] / "spec" / "openapi.yaml"
